@@ -1,0 +1,26 @@
+ruleset io.picolabs.twilio_v2 {
+  meta {
+    configure using account_sid = ""
+                    auth_token = ""
+    provides
+        send_sms,
+        get_message
+  }
+ 
+  global {
+    base_url = <<https://#{account_sid}:#{auth_token}@api.twilio.com/2010-04-01/Accounts/#{account_sid}/>>
+    send_sms = defaction(to, from, message) {
+       http:post(base_url + "Messages.json", form = {
+                "From":from,
+                "To":to,
+                "Body":message
+            })
+    }
+    get_message = function(to, from, size) {
+      pageSize = size.isnull() == true => 1000 | size
+      toFilter = to.isnull() == true => "" | "&To=" + to
+      fromFilter = from.isnull() == true => "" | "&From=" + from
+      return http:get(base_url + "Messages.json?PageSize=" + pageSize + toFilter + fromFilter)
+    }
+  }
+}
