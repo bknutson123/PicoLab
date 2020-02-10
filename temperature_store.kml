@@ -1,0 +1,56 @@
+ruleset temperature_store {
+  
+  meta {
+      provides temperatures, threshold_violations, inrange_temperatures
+      shares threshold_violations, inrange_temperatures
+  }
+  
+  global {
+    temperatures = function() {
+      ent:temperatures.defaultsTo([])
+    }
+    
+    threshold_violations = function() {
+      ent:threshold_temperatures.defaultsTo([])
+    }
+    
+    inrange_temperatures = function() {
+      ent:temperatures.difference(ent:threshold_temperatures)
+    }
+  }
+  rule collect_temperatures {
+    select when wovyn new_temperature_reading
+    pre {
+      temp = event:attr("temperature").klog("collect_temperatures temperature: ")
+      time = event:attr("timestamp").klog("collect_temperatures timestamp: ")
+    }
+
+    always{
+      ent:temperatures := ent:temperatures.defaultsTo([])
+      ent:temperatures := ent:temperatures.append({"temp": temp, "time": time})
+    }
+  }
+  
+  rule collect_threshold_violations {
+    select when wovyn threshold_violation
+     pre {
+      temp = event:attr("temperature").klog("collect_thrsesholds temperature: ")
+      time = event:attr("timestamp").klog("collect_thresholds timestamp: ")
+    }
+    
+    always{
+      ent:threshold_temperatures := ent:threshold_temperatures.defaultsTo([])
+      ent:threshold_temperatures := ent:threshold_temperatures.append({"temp": temp, "time": time}).klog()
+
+    }
+  }
+  
+  rule clear_temperatures {
+    select when sensor reading_reset
+    
+    always {
+      ent:temperatures := null
+      ent:threshold_temperatures := null
+    }
+  }
+}
