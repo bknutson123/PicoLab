@@ -58,3 +58,42 @@ class MyPicoTest(unittest.TestCase):
         delete_response = requests.get(eventUrl.format(root_eci, "sensor", "unneeded_sensor", "?name={}".format(response["name"]).replace(" ", "%20")))
         delete_response2 = requests.get(eventUrl.format(root_eci, "sensor", "unneeded_sensor", "?name={}".format(response2["name"]).replace(" ", "%20")))
 
+    def test_7(self):
+        response = requests.get(eventUrl.format(root_eci, "sensor", "new_sensor", "?sensor_id=1")).json()["directives"][0]["options"]["pico"]
+        response2 = requests.get(eventUrl.format(root_eci, "sensor", "new_sensor", "?sensor_id=2")).json()["directives"][0]["options"]["pico"]
+
+        profile_info = requests.get(cloudUrl.format(response["eci"], "sensor_profile", "profile")).json()
+        profile_info2 = requests.get(cloudUrl.format(response2["eci"], "sensor_profile", "profile")).json()
+        # assert profile_info["location"] == "location"
+        # assert profile_info["name"] == "Sensor 1 Pico"
+        # assert profile_info["notification_number"] == "+8016366490"
+        # assert profile_info["threshold_temperature"] == 75.4
+        # assert profile_info2["name"] == "Sensor 2 Pico"
+        print(profile_info2)
+        print(profile_info)
+
+        temperatures_from_manager = requests.get(cloudUrl.format(root_eci, "manage_sensors", "get_all_temperatures")).json()
+        print(temperatures_from_manager)
+
+        delete_response = requests.get(eventUrl.format(root_eci, "sensor", "unneeded_sensor", "?name={}".format(response["name"]).replace(" ", "%20")))
+        delete_response2 = requests.get(eventUrl.format(root_eci, "sensor", "unneeded_sensor", "?name={}".format(response2["name"]).replace(" ", "%20")))
+
+    def test_8(self):
+        try:
+            response = requests.get(eventUrl.format(root_eci, "sensor", "new_sensor", "?sensor_id=1")).json()["directives"][0]["options"]["pico"]
+            response2 = requests.get(eventUrl.format(root_eci, "sensor", "new_sensor", "?sensor_id=2")).json()["directives"][0]["options"]["pico"]
+
+            requests.post(eventUrl.format(response["eci"], "get", "heartbeat", ""), json = {"genericThing": {"data": {"temperature": [{"temperatureF": 65.8}]}}}).json()
+            requests.post(eventUrl.format(response2["eci"], "get", "heartbeat", ""), json = {"genericThing": {"data": {"temperature": [{"temperatureF": 65.8}]}}}).json()
+            temperatures_from_manager = requests.get(cloudUrl.format(root_eci, "manage_sensors", "get_all_temperatures")).json()
+            print(temperatures_from_manager)
+
+
+            startReport = requests.get(eventUrl.format(root_eci, "report", "start", "")).json()
+
+            print(requests.get(cloudUrl.format(root_eci, "manage_sensors", "reports")).json())
+
+        finally:
+            requests.get(eventUrl.format(root_eci, "sensor", "unneeded_sensor", "?name={}".format(response["name"]).replace(" ", "%20")))
+            requests.get(eventUrl.format(root_eci, "sensor", "unneeded_sensor", "?name={}".format(response2["name"]).replace(" ", "%20")))
+
