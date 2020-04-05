@@ -1,178 +1,73 @@
-ruleset manage_sensors {
-  
+ruleset wovyn_base {
   meta {
-      shares get_all_temperatures, sensors, reports
-      use module io.picolabs.subscription alias Subscriptions
-      use module management_profile
+    use module io.picolabs.lesson_keys
+    use module io.picolabs.twilio_v2 alias twilio
+        with account_sid = keys:twilio{"account_sid"}
+             auth_token =  keys:twilio{"auth_token"}
+    use module sensor_profile
+    use module io.picolabs.subscription alias Subscriptions
+    use module temperature_store
+    logging on
   }
   
   global {
-    nameFromID = function(sensor_id) {
-      "Sensor " + sensor_id + " Pico"
-    }
-    threshold = 75.4
-    phone_number = "+8016366490"
-    location = "location"
-    
-    sensors = function() {
-      Subscriptions:established("Rx_role", "sensor_controller")
-    }
-    
-    get_all_temperatures = function() {
-      test = sensors().klog()
-      sensors().map(function(v,k) {
-        test = v{"Tx"}.klog()
-        test2 = k.klog()
-        http:get("http://localhost:8080/sky/cloud/" + v{"Tx"} + "/temperature_store/temperatures"){"content"}.decode().klog()
-      })
-      
-    }
-        
-    reports = function() {
-      ent:reports.defaultsTo([]).reverse().slice(4).klog()
-    }
+    from_number = "+17125878816"
   }
   
-  rule start_report {
-    select when report start
-    pre {
-      correlation_id = random:uuid
-    }
-    always {
-      ent:processingReports := ent:processingReports.defaultsTo({});
-      ent:processingReports{correlation_id} := {"temperature_sensors": sensors().length(), "temperatures": []}
-      raise report event "send" attributes {"correlation_id": correlation_id}
-    }
-  }
-  
-  rule send_report {
-    select when report send
-    foreach sensors() setting(s)
-    event:send({ "eci": s{"Tx"}, "eid": "reportStart",
-            "domain": "report", "type": "create_report",
-            "attrs": {"Rx": s{"Rx"}, "Tx": s{"Tx"}, "correlation_id": event:attr("correlation_id")} }
+  rule create_temperature_report {
+    select when report create_report
+    event:send(
+      { "eci": event:attr("Rx"), "eid": "reportFinished",
+            "domain": "report", "type": "recieved",
+            "attrs": {
+              "correlation_id": event:attr("correlation_id"),
+              "temperatures": temperature_store:temperatures(),
+              "Tx": event:attr("Tx")
+            } }
             )
   }
   
-  rule recieve_report {
-    select when report recieved
+  rule process_heartbeat {
+    select when get heartbeat where genericThing
     pre {
-      correlation_id = event:attr("correlation_id")
-      temperatures = event:attr("temperatures")
-      tx = event:attr("Tx")
-      current_report = ent:processingReports{correlation_id}
-      tempsList = current_report{"temperatures"}.append({"Tx": tx, "temperatures": temperatures})
+      test = event:attr("genericThing"){"data"}{"temperature"}.klog()
+      test2 = event:attr("genericThing"){"data"}{"temperature"}{0}.klog()
+      temperature = event:attr("genericThing"){"data"}{"temperature"}{0}{"temperatureF"}.klog()
     }
-    // If the number of temperatures has not changed since the last time a report was recieved then dont add to ent:reports
-    if (current_report["temperature_sensors"] == tempsList.length()) then noop()
+
+    send_directive("heartbeat!!");
     
     fired {
-      ent:processingReports := ent:processingReports.put([correlation_id], {"temperature_sensors": current_report["temperature_sensors"], "temperatures": tempsList}).klog()
-      // ent:processingReports{correlation_id} := {"temperature_sensors": current_report["temperature_sensors"], "temperatures": tempsList}
-      report = ent:processingReports{correlation_id}
-      ent:reports := ent:reports.defaultsTo([]).append({
-                "temperature_sensors": report{"temperature_sensors"},
-                "number_of_sensors_responding": report{"temperatures"}.length(),
-                "temperatures": report{"temperatures"}
-            })
-    } else {
-      // ent:processingReports{correlation_id} := {"temperature_sensors": current_report["temperature_sensors"], "temperatures": tempsList}
-      ent:processingReports := ent:processingReports.put([correlation_id], {"temperature_sensors": current_report["temperature_sensors"], "temperatures": tempsList}).klog()
+      raise wovyn event "new_temperature_reading" attributes { 
+        "temperature": temperature,
+        "timestamp": time:now()
+      }
     }
   }
   
-  rule subscription_added {
-        select when wrangler subscription_added
-        pre {
-            Tx = event:attr("_Tx").klog("tx is: ")
-        }
-    }
-  
-  rule create_and_setup_pico {
-    select when sensor new_sensor
+  rule find_high_temps {
+    select when wovyn new_temperature_reading
     pre {
-      sensor_id = event:attr("sensor_id")
-      exists = ent:all_sensors >< nameFromID(sensor_id)
+      temp = event:attr("temperature").klog("This is the temperature: ")
     }
     
-    if exists then
-      send_directive("sensor_ready", {"sensor already created":sensor_id})
-
-    notfired {
-      raise wrangler event "child_creation"
-        attributes { "name": nameFromID(sensor_id), "color": "#ffff00", "rids": ["io.picolabs.subscription", "temperature_store", "sensor_profile", "wovyn_base"]}
-    }
-  }
-  
-  rule save_name_to_eci_sensor {
-    select when wrangler new_child_created
-    
-    pre {
-      name = event:attr("name")
-      id = event:attr("id")
-      eci = event:attr("eci")
-    }
-    
-    event:send({ "eci"   : eci,
-             "domain": "sensor", "type": "profile_updated",
-             "attrs" : { "name": name, "threshold_temperature": threshold, "phone_number": phone_number, "location": location }, "eid": "" })
-
-    always {
-      ent:all_sensors := ent:all_sensors.defaultsTo({})
-      ent:all_sensors{[name]} := {"id": id, "eci": eci}
-      raise wrangler event "subscription" attributes
-       { "name" : "my_sensor",
-         "Rx_role": "sensor_controller",
-         "Tx_role": "sensor_thing",
-         "channel_type": "subscription",
-         "wellKnown_Tx" : eci
-       }
-    }
-  }
-  
-  rule introduce_sensor_to_manager {
-        select when sensor introduce
-        pre {
-            name = event:attr("name")
-            eci = event:attr("eci")
-            host = event:attr("host")
-        }
-
-        always {
-            raise wrangler event "subscription" attributes
-                {
-                    "name": name,
-                    "Rx_role": "sensor_controller",
-                    "Tx_host": host,
-                    "Tx_role": "sensor_thing",
-                    "channel_type": "subscription",
-                    "wellKnown_Tx": eci
-                }
-        }
-    }
-    
-  rule send_violation_message {
-        select when sensor_manager violation
-        pre {
-            notification_message = "violation: " + event:attr("temperature") + " at this time: " + event:attr("timestamp")
-        }
-        always{
-            raise management_profile event "send_sms"
-                attributes {"notification_message": notification_message}
-        }
-    }
-  
-  rule unneeded_sensor {
-    select when sensor unneeded_sensor
-    pre {
-      name = event:attr("name")
-      sensor_to_delete = ent:all_sensors{name}
-    }
-    
+    if temp > sensor_profile:profile(){"threshold_temperature"}.as("Number").klog("TEMP THRES FROM SES PROFILE") then
+      send_directive("Temperature threshold reached!")  
+      
     fired {
-      raise wrangler event "child_deletion" attributes sensor_to_delete
-      ent:all_sensors := ent:all_sensors.delete([name])
+      raise wovyn event "threshold_violation" attributes event:attrs
     }
   }
   
+  rule send_threshold_notification {
+    select when wovyn threshold_violation
+    foreach Subscriptions:established("Rx_role", "sensor_controller") setting (subscription)
+      event:send({
+        "eci": subscription{"Tx"}, 
+        "eid": "threshold-violation",
+        "domain": "sensor_manager",
+        "type": "violation",
+        "attrs": event:attrs
+      })
+  }
 }
